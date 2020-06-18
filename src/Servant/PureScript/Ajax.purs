@@ -11,6 +11,7 @@ import Affjax (Request, Response, request, printError)
 import Affjax as Affjax
 import Affjax.RequestHeader (RequestHeader(..))
 import Affjax.ResponseFormat as ResponseFormat
+import Affjax.StatusCode (StatusCode (..))
 import Control.Monad.Error.Class (class MonadError, catchError, throwError)
 import Control.Monad.Except (runExcept, mapExcept)
 import Data.Argonaut.Core (Json)
@@ -43,6 +44,7 @@ data ErrorDescription
   = DecodingError String
   | ConnectionError String
   | ResponseFormatError String
+  | Not200Error Int String
 
 
 makeAjaxError :: Request Unit -> ErrorDescription -> AjaxError
@@ -104,6 +106,7 @@ ajax decoder req = do
   let headers = [ContentType applicationJSON] <> req.headers
   response <- liftWithError $ request (req { responseFormat = ResponseFormat.string, headers = headers })
   response' <- toFormatError response
+  throwNon200Error response' response'.body
   decoded <- toDecodingError $ runExcept $ parseJSON response'.body >>= decoder
   pure $ response' { body = decoded }
   where
@@ -125,6 +128,12 @@ ajax decoder req = do
     toFormatError r = case r of
         Left err -> throwError $ makeAjaxError req $ ResponseFormatError (printError err)
         Right v  -> pure v
+
+    throwNon200Error :: forall a. Response a -> String -> m Unit
+    throwNon200Error response body =
+      case response.status of
+        StatusCode 200 -> pure unit
+        StatusCode n -> throwError $ makeAjaxError req $ Not200Error n body
 
     toDecodingError :: forall a. Either MultipleErrors a -> m a
     toDecodingError r = case r of
